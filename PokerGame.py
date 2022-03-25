@@ -33,6 +33,7 @@ def newPokerStrategy(model : keras.Sequential, num_cards : int, bet_to_ante_rati
 	return PokerStrategy(num_cards, bet_to_ante_ratio, predictions)
 
 
+dict_spec = (numba.types.int32, numba.types.boolean)
 spec = [
 	('chance_to_open_check', float32[:]),
 	('chance_to_check_check', float32[:]),
@@ -40,6 +41,10 @@ spec = [
 	('chance_to_check_bet_fold', float32[:]),
 	('num_cards', int32),
 	('bet_to_ante_ratio', float32),
+	('author_checks_to_open_check', numba.types.DictType(*dict_spec)),
+	('author_folds_to_open_bet', numba.types.DictType(*dict_spec)),
+	('author_folds_to_check_bet', numba.types.DictType(*dict_spec)),
+	('author_open_checks', numba.types.DictType(*dict_spec)),
 ]
 
 @jitclass(spec)
@@ -51,6 +56,12 @@ class PokerStrategy:
 		self.chance_to_check_check = numpy.zeros(num_cards + 1, numba.float32)
 		self.chance_to_bet_fold = numpy.zeros(num_cards + 1, numba.float32)
 		self.chance_to_check_bet_fold = numpy.zeros(num_cards + 1, numba.float32)
+
+		self.author_checks_to_open_check = numba.typed.Dict.empty(*dict_spec)
+		self.author_folds_to_open_bet = numba.typed.Dict.empty(*dict_spec)
+		self.author_folds_to_check_bet = numba.typed.Dict.empty(*dict_spec)
+		self.author_open_checks = numba.typed.Dict.empty(*dict_spec)
+
 		curr = 0
 		for i in range(1, self.num_cards + 1):
 			self.chance_to_open_check[i] = (predictions[curr][0])
@@ -107,19 +118,19 @@ class PokerStrategy:
 	# 	return float(subprocess.check_output([os.getcwd() + "/checker.exe", "./poker.in", "--out", "./poker.out"]).decode())
 	
 
-	def antePotWinnings(self, self_card : int, opponents_card : int) -> float:
+	def __antePotWinnings(self, self_card : int, opponents_card : int) -> float:
 		if self_card > opponents_card:
 			return 1.0
 		return 0.0
 	
 
-	def betPotWinnings(self, self_card : int, opponents_card : int) -> float:
+	def __betPotWinnings(self, self_card : int, opponents_card : int) -> float:
 		if self_card > opponents_card:
 			return 1 + self.bet_to_ante_ratio
 		return -self.bet_to_ante_ratio
 
 
-	def compute_average_winnings(self) -> float:
+	def computeExpectedWinnings(self) -> float:
 		total_winnings = 0.0
 		total_situations = 0
 		for my_card in range(1, self.num_cards + 1):
@@ -127,216 +138,174 @@ class PokerStrategy:
 				if my_card == authors_card:
 					continue
 				for I_am_first in [True, False]:
-					# open
-					if I_am_first:
+					if I_am_first: # open
 						# check
 						chance_to_open_check = self.chance_to_open_check[my_card]
 						winnings_if_open_check = 0.0
-						if self.author_checks_to_open_check(authors_card): # author checks
-							winnings_if_open_check += self.antePotWinnings(my_card, authors_card)
-						else: # author bets (if I fold I don't loose anything)
+						if self.__authorChecksToOpenCheck(authors_card): # author checks
+							winnings_if_open_check += self.__antePotWinnings(my_card, authors_card)
+						else: # author bets (if I fold I don't lose anything)
 							winnings_if_open_check \
 								+= (1 - self.chance_to_check_bet_fold[my_card]) \
-								* self.betPotWinnings(my_card, authors_card)
+								* self.__betPotWinnings(my_card, authors_card)
 						# bet
 						chance_to_open_bet = 1 - chance_to_open_check
 						winnings_if_open_bet = 0.0
-						if self.author_folds_to_open_bet(authors_card): # author folds
+						if self.__authorFoldsToOpenBet(authors_card): # author folds
 							winnings_if_open_bet += 1.0
 						else: # author calls
-							winnings_if_open_bet += self.betPotWinnings(my_card, authors_card)
+							winnings_if_open_bet += self.__betPotWinnings(my_card, authors_card)
+						# total
 						total_winnings \
 							+= chance_to_open_check * winnings_if_open_check \
 							+ chance_to_open_bet * winnings_if_open_bet
-						
 					else: # author is first
-						pass
-
+						if self.__authorOpenChecks(authors_card): # author checks
+							# check check
+							chance_to_check_check = self.chance_to_check_check[my_card]
+							winnings_if_check_check = 0.0
+							winnings_if_check_check += self.__antePotWinnings(my_card, authors_card)
+							# check bet
+							chance_to_check_bet = 1 - chance_to_check_check
+							winnings_if_check_bet = 0.0
+							if self.__authorFoldsToCheckBet(authors_card):
+								winnings_if_check_bet += 1
+							else:
+								winnings_if_check_bet += self.__betPotWinnings(my_card, authors_card)
+							# total
+							total_winnings \
+								+= chance_to_check_check * winnings_if_check_check \
+								+ chance_to_check_bet * winnings_if_check_bet
+						else: # author bets
+							# bet fold
+							chance_to_bet_fold = self.chance_to_bet_fold[my_card]
+							winnings_if_bet_fold = 0.0 # we don't lose anything here
+							# bet call
+							chance_to_bet_call = 1 - chance_to_bet_fold
+							winnings_if_bet_call = 0.0
+							winnings_if_bet_call = self.__betPotWinnings(my_card, authors_card)
+							# total
+							total_winnings \
+								+= chance_to_bet_fold * winnings_if_bet_fold \
+								+ chance_to_bet_call * winnings_if_bet_call
 					total_situations += 1
+		return total_winnings / total_situations
+	
 
-		avg_winnings = total_winnings / total_situations
-
-
-		avg_winnings = 0.0
-
-		for my_card in range(1, self.num_cards + 1):
-			# open
-			winnings_if_open = 0.0
-			winnings_if_open_check = 0.0
-			chance_to_open_check = self.chance_to_open_check[my_card]
-			winnings_if_open_bet = 0.0
-			chance_to_open_bet = 1 - chance_to_open_check
-			for authors_card in range(1, self.num_cards + 1):
-				if authors_card == my_card:
-					continue
-				# open check
-				if self.author_checks_to_open_check(authors_card):
-					if my_card > authors_card:
-						winnings_if_open_check += 1
-					else:
-						winnings_if_open_check -= 1
-				else:
-					winnings_if_open_check_bet_fold = 0.0
-					chance_to_open_check_bet_fold = self.chance_to_check_bet_fold[my_card]
-					winnings_if_open_check_bet_call = 0.0
-					chance_to_open_check_bet_call = 1 - chance_to_open_check_bet_fold
-					winnings_if_open_check_bet_fold -= 1
-					if my_card > authors_card:
-						winnings_if_open_check_bet_call += 1 + self.bet_to_ante_ratio
-					else:
-						winnings_if_open_check_bet_call -= 1 + self.bet_to_ante_ratio
-					winnings_if_open_check \
-						+= winnings_if_open_check_bet_fold * chance_to_open_check_bet_fold \
-						+ winnings_if_open_check_bet_call * chance_to_open_check_bet_call
-				# open bet
-				if self.author_folds_to_open_bet(authors_card):
-					winnings_if_open_bet += 1
-				else:
-					if my_card > authors_card:
-						winnings_if_open_bet += 1 + self.bet_to_ante_ratio
-					else:
-						winnings_if_open_bet -= 1 + self.bet_to_ante_ratio
-			winnings_if_open_check /= self.num_cards - 1
-			winnings_if_open_bet /= self.num_cards - 1
-			winnings_if_open \
-				+= winnings_if_open_check * chance_to_open_check \
-				+ winnings_if_open_bet * chance_to_open_bet
-
-			# check
-			winnings_if_check = 0.0
-			winnings_if_check_check = 0.0
-			winnings_if_check_bet = 0.0
-			chance_to_check_check = self.chance_to_check_check[my_card]
-			chance_to_check_bet = 1 - chance_to_check_check
-			for authors_card in range(1, self.num_cards + 1):
-				if authors_card == my_card:
-					continue
-				# check check
-				if my_card > authors_card:
-					winnings_if_check_check += 1
-				else:
-					winnings_if_check_check -= 1
-				# check bet
-				if self.author_folds_to_check_bet:
-					winnings_if_check_bet += 1
-				else:
-					pot = 1 + self.bet_to_ante_ratio
-					if my_card > authors_card:
-						winnings_if_check_bet += pot
-					else:
-						winnings_if_check_bet -= pot
-			winnings_if_check_check /= self.num_cards - 1
-			winnings_if_check_bet /= self.num_cards - 1
-			winnings_if_check \
-				+= winnings_if_check_check * chance_to_check_check \
-				+ winnings_if_check_bet * chance_to_check_bet
-			
-			# bet
-			winnings_if_bet = 0.0
-			winnings_if_bet_fold = 0.0
-			winnings_if_bet_call = 0.0
-			chance_to_bet_fold = self.chance_to_bet_fold[my_card]
-			chance_to_bet_call = 1 - chance_to_bet_fold
-			for authors_card in range(1, self.num_cards + 1):
-				if authors_card == my_card:
-					continue
-				# bet fold
-				winnings_if_bet_fold -= 1
-				# bet call
-				if my_card > authors_card:
-					winnings_if_bet_call += 1 + self.bet_to_ante_ratio
-				else:
-					winnings_if_bet_call -= 1 + self.bet_to_ante_ratio
-			winnings_if_bet_fold /= self.num_cards - 1
-			winnings_if_bet_call /= self.num_cards - 1
-			winnings_if_bet \
-				+= winnings_if_bet_fold * chance_to_bet_fold \
-				+ winnings_if_bet_call * chance_to_bet_call
-
-			avg_winnings += numpy.average([winnings_if_open, numpy.average([winnings_if_check, winnings_if_bet])])
+	def __authorOpenChecks(self, authors_card : int) -> bool:
+		if authors_card in self.author_open_checks:
+			return self.author_open_checks[authors_card]
 		
-		avg_winnings /= self.num_cards
-		return avg_winnings
-	
+		expected_winnings_if_check = 0.0
+		expected_winnings_if_bet = 0.0
 
-	def author_checks_to_open_check(self, authors_card : int) -> bool:
-		chance_to_have_checked = 0.0
 		for potential_my_card in range(1, self.num_cards + 1):
 			if potential_my_card == authors_card:
 				continue
-			chance_to_have_checked += self.chance_to_open_check[potential_my_card]
-		winnings_if_check = 0.0
-		winnings_if_bet = 0.0
-		for potential_my_card in range(1, self.num_cards + 1):
-			if potential_my_card == authors_card:
-				continue
-			if authors_card > potential_my_card:
-				winnings_if_check \
-					+= 1 * (self.chance_to_open_check[potential_my_card] / chance_to_have_checked)
-				winnings_if_bet \
-					+= (
-						1 * self.chance_to_bet_fold[potential_my_card]
-						+ (1 + self.bet_to_ante_ratio) * (1 - self.chance_to_bet_fold[potential_my_card])
-					) \
-					* (self.chance_to_open_check[potential_my_card] / chance_to_have_checked)
+			# author bets
+			expected_winnings_if_bet \
+				+= 1 * (self.chance_to_bet_fold[potential_my_card]) \
+				+ \
+					self.__betPotWinnings(authors_card, potential_my_card) \
+					* (1 - self.chance_to_bet_fold[potential_my_card])
+			# author checks
+			if self.__authorFoldsToCheckBet(authors_card):
+				expected_winnings_if_check \
+					+= \
+						self.__antePotWinnings(authors_card, potential_my_card) \
+						* self.chance_to_check_check[potential_my_card] \
+					+ \
+						self.__betPotWinnings(0, potential_my_card) \
+						* (1 - self.chance_to_check_check[potential_my_card])
 			else:
-				winnings_if_check \
-					-= 1 * (self.chance_to_open_check[potential_my_card] / chance_to_have_checked)
-				winnings_if_bet \
-					-= (
-						1 * self.chance_to_bet_fold[potential_my_card]
-						+ (1 + self.bet_to_ante_ratio) * (1 - self.chance_to_bet_fold[potential_my_card])
-					) \
-					* (self.chance_to_open_check[potential_my_card] / chance_to_have_checked)
-		return winnings_if_check > winnings_if_bet
-	
+				expected_winnings_if_bet \
+					+= \
+						1 * self.chance_to_check_bet_fold[authors_card] \
+					+ \
+						self.__betPotWinnings(authors_card, potential_my_card) \
+						* (1 - self.chance_to_check_bet_fold[authors_card])
 
-	def author_folds_to_open_bet(self, authors_card : int) -> bool:
-		chance_to_have_bet = 0.0
-		for potential_my_card in range(1, self.num_cards + 1):
-			if potential_my_card == authors_card:
-				continue
-			chance_to_have_bet += (1 - self.chance_to_open_check[potential_my_card])
+		self.author_open_checks[authors_card] = expected_winnings_if_check > expected_winnings_if_bet
+		return self.author_open_checks[authors_card]
+
+
+
+	def __authorChecksToOpenCheck(self, authors_card : int) -> bool:
+		if authors_card in self.author_checks_to_open_check:
+			return self.author_checks_to_open_check[authors_card]
 		
-		winnings_if_fold = 0.0
-		winnings_if_call = 0.0
+		chance_to_have_open_checked = 0.0
+		for potential_my_card in range(1, self.num_cards + 1):
+			if potential_my_card == authors_card:
+				continue
+			chance_to_have_open_checked += self.chance_to_open_check[potential_my_card]
+		
+		expected_winnings_if_check = 0.0
+		expected_winnings_if_bet = 0.0
+		for potential_my_card in range(1, self.num_cards + 1):
+			if potential_my_card == authors_card:
+				continue
+			expected_winnings_if_check \
+				+= self.__antePotWinnings(authors_card, potential_my_card) \
+				* (self.chance_to_open_check[potential_my_card] / chance_to_have_open_checked)
+			expected_winnings_if_bet \
+				+= (
+					self.chance_to_check_bet_fold[potential_my_card] * 1 # I fold
+					+ (1 - self.chance_to_check_bet_fold[potential_my_card]) # I call
+					* self.__betPotWinnings(authors_card, potential_my_card)
+				) \
+				* (self.chance_to_open_check[potential_my_card] / chance_to_have_open_checked)
+		
+		self.author_checks_to_open_check[authors_card] = expected_winnings_if_check > expected_winnings_if_bet
+		return self.author_checks_to_open_check[authors_card]
+	
+
+	def __authorFoldsToOpenBet(self, authors_card : int) -> bool:
+		if authors_card in self.author_folds_to_open_bet:
+			return self.author_folds_to_open_bet[authors_card]
+		
+		chance_to_have_open_bet = 0.0
+		for potential_my_card in range(1, self.num_cards + 1):
+			if potential_my_card == authors_card:
+				continue
+			chance_to_have_open_bet += (1 - self.chance_to_open_check[potential_my_card])
+		
+		expected_winnings_if_fold = 0.0
+		expected_winnings_if_call = 0.0
 
 		for potential_my_card in range(1, self.num_cards + 1):
 			if potential_my_card == authors_card:
 				continue
-			winnings_if_fold -= 1 * ((1 - self.chance_to_open_check[potential_my_card]) / chance_to_have_bet)
-			if authors_card > potential_my_card:
-				winnings_if_call += (1 + self.bet_to_ante_ratio) \
-					* ((1 - self.chance_to_open_check[potential_my_card]) / chance_to_have_bet)
-			else:
-				winnings_if_call -= (1 + self.bet_to_ante_ratio) \
-					* ((1 - self.chance_to_open_check[potential_my_card]) / chance_to_have_bet)
+			expected_winnings_if_call \
+				+= self.__betPotWinnings(authors_card, potential_my_card) \
+				* ((1 - self.chance_to_open_check[potential_my_card]) / chance_to_have_open_bet)
 
-		return winnings_if_fold > winnings_if_call
+		self.author_folds_to_open_bet[authors_card] = expected_winnings_if_fold > expected_winnings_if_call
+		return self.author_folds_to_open_bet[authors_card]
 	
 
-	def author_folds_to_check_bet(self, authors_card : int) -> bool:
+	def __authorFoldsToCheckBet(self, authors_card : int) -> bool:
+		if authors_card in self.author_folds_to_check_bet:
+			return self.author_folds_to_check_bet[authors_card]
+
 		chance_to_have_check_bet = 0.0
 		for potential_my_card in range(1, self.num_cards + 1):
 			if potential_my_card == authors_card:
 				continue
 			chance_to_have_check_bet += (1 - self.chance_to_check_check[potential_my_card])
 		
-		winnings_if_fold = 0.0
-		winnings_if_call = 0.0
+		expected_winnings_if_fold = 0.0
+		expected_winnings_if_call = 0.0
 
 		for potential_my_card in range(1, self.num_cards + 1):
 			if potential_my_card == authors_card:
 				continue
-			winnings_if_fold -= 1 * ((1 - self.chance_to_check_check[potential_my_card]) / chance_to_have_check_bet)
-			pot = (1 + self.bet_to_ante_ratio) \
+			expected_winnings_if_call \
+				+= self.__betPotWinnings(authors_card, potential_my_card) \
 				* ((1 - self.chance_to_check_check[potential_my_card]) / chance_to_have_check_bet)
-			if authors_card > potential_my_card:
-				winnings_if_call += pot
-			else:
-				winnings_if_call -= pot
 
-		return winnings_if_fold > winnings_if_call
+		self.author_folds_to_check_bet[authors_card] = expected_winnings_if_fold > expected_winnings_if_call
+		return self.author_folds_to_check_bet[authors_card]
 
 def strink(_self):
 	ans = ""
