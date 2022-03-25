@@ -105,9 +105,58 @@ class PokerStrategy:
 	# def compute_expected_profit(self) -> float:
 	# 	self.output_to_files()
 	# 	return float(subprocess.check_output([os.getcwd() + "/checker.exe", "./poker.in", "--out", "./poker.out"]).decode())
+	
+
+	def antePotWinnings(self, self_card : int, opponents_card : int) -> float:
+		if self_card > opponents_card:
+			return 1.0
+		return 0.0
+	
+
+	def betPotWinnings(self, self_card : int, opponents_card : int) -> float:
+		if self_card > opponents_card:
+			return 1 + self.bet_to_ante_ratio
+		return -self.bet_to_ante_ratio
 
 
 	def compute_average_winnings(self) -> float:
+		total_winnings = 0.0
+		total_situations = 0
+		for my_card in range(1, self.num_cards + 1):
+			for authors_card in range(1, self.num_cards + 1):
+				if my_card == authors_card:
+					continue
+				for I_am_first in [True, False]:
+					# open
+					if I_am_first:
+						# check
+						chance_to_open_check = self.chance_to_open_check[my_card]
+						winnings_if_open_check = 0.0
+						if self.author_checks_to_open_check(authors_card): # author checks
+							winnings_if_open_check += self.antePotWinnings(my_card, authors_card)
+						else: # author bets (if I fold I don't loose anything)
+							winnings_if_open_check \
+								+= (1 - self.chance_to_check_bet_fold[my_card]) \
+								* self.betPotWinnings(my_card, authors_card)
+						# bet
+						chance_to_open_bet = 1 - chance_to_open_check
+						winnings_if_open_bet = 0.0
+						if self.author_folds_to_open_bet(authors_card): # author folds
+							winnings_if_open_bet += 1.0
+						else: # author calls
+							winnings_if_open_bet += self.betPotWinnings(my_card, authors_card)
+						total_winnings \
+							+= chance_to_open_check * winnings_if_open_check \
+							+ chance_to_open_bet * winnings_if_open_bet
+						
+					else: # author is first
+						pass
+
+					total_situations += 1
+
+		avg_winnings = total_winnings / total_situations
+
+
 		avg_winnings = 0.0
 
 		for my_card in range(1, self.num_cards + 1):
