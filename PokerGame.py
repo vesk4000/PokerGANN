@@ -1,5 +1,6 @@
 from asyncio import subprocess
 from itertools import count
+from re import S
 import string
 import numpy
 import numba
@@ -9,7 +10,7 @@ import os
 import subprocess
 from numba import int32, float32    # import the types
 from numba.experimental import jitclass
-
+numpy.seterr(divide = "print")
 
 @njit
 def generatePredictionInputData(num_cards : int, bet_to_ante_ratio : int):
@@ -95,14 +96,10 @@ class PokerStrategy:
 	# 		)
 
 
-	def __str__(self) -> string:
-		ans = ""
-		for card in range(1, self.num_cards + 1):
-			ans += str(card) + " open: check " + str(self.chance_to_open_check[card]) + "\n"
-			ans += str(card) + " check: check " + str(self.chance_to_check_check[card]) + "\n"
-			ans += str(card) + " bet: fold " + str(self.chance_to_bet_fold[card]) + "\n"
-			ans += str(card) + " check-bet: fold " + str(self.chance_to_check_bet_fold[card]) + "\n"
-		return ans
+
+
+	def __str__(self) -> numba.types.string:
+		return toString(self)
 
 	# def output_to_files(self, file : string = "poker"):
 	# 	text_file = open(os.getcwd() + "/" + file + ".in", 'w');
@@ -111,26 +108,32 @@ class PokerStrategy:
 	# 	text_file = open(os.getcwd() + "/" + file + ".out", 'w');
 	# 	text_file.write(str(self))
 	# 	text_file.close()
-	
+
 
 	# def compute_expected_profit(self) -> float:
 	# 	self.output_to_files()
 	# 	return float(subprocess.check_output([os.getcwd() + "/checker.exe", "./poker.in", "--out", "./poker.out"]).decode())
-	
+
 
 	def __antePotWinnings(self, self_card : int, opponents_card : int) -> float:
 		if self_card > opponents_card:
 			return 1.0
 		return 0.0
-	
+
 
 	def __betPotWinnings(self, self_card : int, opponents_card : int) -> float:
 		if self_card > opponents_card:
 			return 1 + self.bet_to_ante_ratio
 		return -self.bet_to_ante_ratio
 
-
+	
 	def computeExpectedWinnings(self) -> float:
+		for authors_card in range(1, self.num_cards + 1):
+			self.__authorChecksToOpenCheck(authors_card)
+			self.__authorFoldsToCheckBet(authors_card)
+			self.__authorFoldsToOpenBet(authors_card)
+			self.__authorOpenChecks(authors_card)
+
 		total_winnings = 0.0
 		total_situations = 0
 		for my_card in range(1, self.num_cards + 1):
@@ -183,19 +186,29 @@ class PokerStrategy:
 							# bet call
 							chance_to_bet_call = 1 - chance_to_bet_fold
 							winnings_if_bet_call = 0.0
-							winnings_if_bet_call = self.__betPotWinnings(my_card, authors_card)
+							winnings_if_bet_call += self.__betPotWinnings(my_card, authors_card)
 							# total
 							total_winnings \
 								+= chance_to_bet_fold * winnings_if_bet_fold \
 								+ chance_to_bet_call * winnings_if_bet_call
 					total_situations += 1
+		if total_situations == 0:
+			# print("Total situataions is 0! Total winnings = ")
+			# print(total_winnings)
+			# print("num cards")
+			# print(self.num_cards)
+			# print("bet to ante ratio")
+			# print(self.bet_to_ante_ratio)
+			# print("strategy")
+			# printStrategy(self)
+			pass
 		return total_winnings / total_situations
-	
+
 
 	def __authorOpenChecks(self, authors_card : int) -> bool:
 		if authors_card in self.author_open_checks:
 			return self.author_open_checks[authors_card]
-		
+
 		expected_winnings_if_check = 0.0
 		expected_winnings_if_bet = 0.0
 
@@ -205,41 +218,43 @@ class PokerStrategy:
 			# author bets
 			expected_winnings_if_bet \
 				+= 1 * (self.chance_to_bet_fold[potential_my_card]) \
-				+ \
-					self.__betPotWinnings(authors_card, potential_my_card) \
-					* (1 - self.chance_to_bet_fold[potential_my_card])
+				+ self.__betPotWinnings(authors_card, potential_my_card) \
+				* (1 - self.chance_to_bet_fold[potential_my_card])
 			# author checks
-			if self.__authorFoldsToCheckBet(authors_card):
+			expected_winnings_if_check \
+				+= self.__antePotWinnings(authors_card, potential_my_card) \
+				* self.chance_to_check_check[potential_my_card]
+			if not self.__authorFoldsToCheckBet(authors_card):
 				expected_winnings_if_check \
-					+= \
-						self.__antePotWinnings(authors_card, potential_my_card) \
-						* self.chance_to_check_check[potential_my_card] \
-					+ \
-						self.__betPotWinnings(0, potential_my_card) \
-						* (1 - self.chance_to_check_check[potential_my_card])
-			else:
-				expected_winnings_if_bet \
-					+= \
-						1 * self.chance_to_check_bet_fold[authors_card] \
-					+ \
-						self.__betPotWinnings(authors_card, potential_my_card) \
-						* (1 - self.chance_to_check_bet_fold[authors_card])
+					+= self.__betPotWinnings(authors_card, potential_my_card) \
+					* (1 - self.chance_to_check_check[potential_my_card])
 
 		self.author_open_checks[authors_card] = expected_winnings_if_check > expected_winnings_if_bet
 		return self.author_open_checks[authors_card]
 
 
-
+	
 	def __authorChecksToOpenCheck(self, authors_card : int) -> bool:
 		if authors_card in self.author_checks_to_open_check:
 			return self.author_checks_to_open_check[authors_card]
-		
+
 		chance_to_have_open_checked = 0.0
 		for potential_my_card in range(1, self.num_cards + 1):
 			if potential_my_card == authors_card:
 				continue
 			chance_to_have_open_checked += self.chance_to_open_check[potential_my_card]
-		
+
+		if chance_to_have_open_checked == 0:
+			# print("chance_to_have_open_checked is 0!")
+			# print("num cards")
+			# print(self.num_cards)
+			# print("bet to ante ratio")
+			# print(self.bet_to_ante_ratio)
+			# print("strategy")
+			# printStrategy(self)
+			return False
+			
+
 		expected_winnings_if_check = 0.0
 		expected_winnings_if_bet = 0.0
 		for potential_my_card in range(1, self.num_cards + 1):
@@ -255,21 +270,32 @@ class PokerStrategy:
 					* self.__betPotWinnings(authors_card, potential_my_card)
 				) \
 				* (self.chance_to_open_check[potential_my_card] / chance_to_have_open_checked)
-		
+
 		self.author_checks_to_open_check[authors_card] = expected_winnings_if_check > expected_winnings_if_bet
 		return self.author_checks_to_open_check[authors_card]
-	
 
+	
 	def __authorFoldsToOpenBet(self, authors_card : int) -> bool:
 		if authors_card in self.author_folds_to_open_bet:
 			return self.author_folds_to_open_bet[authors_card]
-		
+
 		chance_to_have_open_bet = 0.0
 		for potential_my_card in range(1, self.num_cards + 1):
 			if potential_my_card == authors_card:
 				continue
 			chance_to_have_open_bet += (1 - self.chance_to_open_check[potential_my_card])
-		
+
+			if chance_to_have_open_bet == 0:
+				# print("chance_to_have_open_bet is 0!")
+				# print("num cards")
+				# print(self.num_cards)
+				# print("bet to ante ratio")
+				# print(self.bet_to_ante_ratio)
+				# print("strategy")
+				# printStrategy(self)
+				return False
+				
+
 		expected_winnings_if_fold = 0.0
 		expected_winnings_if_call = 0.0
 
@@ -282,8 +308,8 @@ class PokerStrategy:
 
 		self.author_folds_to_open_bet[authors_card] = expected_winnings_if_fold > expected_winnings_if_call
 		return self.author_folds_to_open_bet[authors_card]
-	
 
+	
 	def __authorFoldsToCheckBet(self, authors_card : int) -> bool:
 		if authors_card in self.author_folds_to_check_bet:
 			return self.author_folds_to_check_bet[authors_card]
@@ -293,7 +319,17 @@ class PokerStrategy:
 			if potential_my_card == authors_card:
 				continue
 			chance_to_have_check_bet += (1 - self.chance_to_check_check[potential_my_card])
-		
+
+			if chance_to_have_check_bet == 0:
+				# print("chance_to_have_check_bet is 0!")
+				# print("num cards")
+				# print(self.num_cards)
+				# print("bet to ante ratio")
+				# print(self.bet_to_ante_ratio)
+				# print("strategy")
+				# printStrategy(self)
+				return False
+
 		expected_winnings_if_fold = 0.0
 		expected_winnings_if_call = 0.0
 
@@ -307,21 +343,24 @@ class PokerStrategy:
 		self.author_folds_to_check_bet[authors_card] = expected_winnings_if_fold > expected_winnings_if_call
 		return self.author_folds_to_check_bet[authors_card]
 
-def strink(_self):
+def toString(strategy : PokerStrategy) -> str:
 	ans = ""
-	for card in range(1, _self.num_cards + 1):
-		ans += str(card) + " open: check " + str(_self.chance_to_open_check[card]) + "\n"
-		ans += str(card) + " check: check " + str(_self.chance_to_check_check[card]) + "\n"
-		ans += str(card) + " bet: fold " + str(_self.chance_to_bet_fold[card]) + "\n"
-		ans += str(card) + " check-bet: fold " + str(_self.chance_to_check_bet_fold[card]) + "\n"
+	for card in range(1, strategy.num_cards + 1):
+		ans += f"{card} open: check {strategy.chance_to_open_check[card]}\n"
+		ans += f"{card} check: check {strategy.chance_to_check_check[card]}\n"
+		ans += f"{card} bet: fold {strategy.chance_to_bet_fold[card]}\n"
+		ans += f"{card} check-bet: fold {strategy.chance_to_check_bet_fold[card]}\n"
 	return ans
+
+def printStrategy(strategy : PokerStrategy):
+	print(toString(strategy))
 
 def output_to_files(_self, file : string = "poker"):
 	text_file = open(os.getcwd() + "/" + file + ".in", 'w');
 	text_file.write(str(_self.num_cards) + " " + str(1) + " " + str(_self.bet_to_ante_ratio))
 	text_file.close()
 	text_file = open(os.getcwd() + "/" + file + ".out", 'w');
-	text_file.write(strink(_self))
+	text_file.write(toString(_self))
 	text_file.close()
 
 

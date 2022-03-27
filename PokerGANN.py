@@ -2,6 +2,7 @@ from pdb import find_function
 from pyexpat import model
 import warnings
 from matplotlib import animation
+import matplotlib
 import pygad
 import numpy
 import numba
@@ -10,6 +11,8 @@ import PokerGame
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 warnings.filterwarnings( "ignore", module = "matplotlib\..*" )
+matplotlib.set_loglevel("error")
+warnings.filterwarnings("ignore")
 from tensorflow import keras
 from os.path import exists
 from matplotlib import pyplot
@@ -18,10 +21,12 @@ import time
 from matplotlib.animation import FuncAnimation
 import _thread
 import threading
+numpy.seterr(divide = "print")
 
 
 def main():
-	train([[3, 1], [5, 3, 2], [31, 4, 5]], num_generations = 300, save = "model")
+	# [3, 1], [5, 3, 2], [31, 4, 5]
+	train([[31, 4, 5]], num_generations = 1000, save = "model")
 
 
 global_tests : list[list[int]] = None
@@ -41,7 +46,7 @@ def train(
 	save : str = None,
 	time_limit : int = None,
 	num_generations : int = None,
-	mutation_probability : int = 0.2
+	mutation_probability : int = 0.4
 ):
 	global global_time_limit, global_tests, global_model
 	global_time_limit = time_limit
@@ -70,21 +75,23 @@ def test():
 
 
 # Note: Changing anything here will likely invalidate any models that have been saved
-def init(load : str = None, num_generations : int = None, mutation_probability : int = 0.2) -> tuple[pygad.GA, keras.Sequential]:
+def init(load : str = None, num_generations : int = None, mutation_probability : int = 0.3) -> tuple[pygad.GA, keras.Sequential]:
 	global global_model
 	
-	NUM_SOLUTIONS = 10
+	NUM_SOLUTIONS = 15
 	NUM_PARENTS_MATING = 5
 
 	print()
 
 	input_layer = keras.layers.Input(3)
 	hidden_layer1 = keras.layers.Dense(2, activation = "elu")
+	hidden_layer2 = keras.layers.Dense(2, activation = "elu")
 	output_layer = keras.layers.Dense(1, activation = "sigmoid")
 
 	model = keras.Sequential()
 	model.add(input_layer)
 	model.add(hidden_layer1)
+	model.add(hidden_layer2)
 	model.add(output_layer)
 
 	keras_ga = pygad.kerasga.KerasGA(model = model, num_solutions = NUM_SOLUTIONS)
@@ -99,6 +106,7 @@ def init(load : str = None, num_generations : int = None, mutation_probability :
 			num_parents_mating = NUM_PARENTS_MATING,
 			initial_population = initial_population,
 			save_solutions = True,
+			parent_selection_type = "sss"
 		)
 		print("Created GANN model\n")
 	else:
@@ -150,8 +158,7 @@ def evaluate_solution(solution, model, tests : list[list[int]]):
 			bet_to_ante_ratio = test[2] / test[1]
 		model.set_weights(weights = pygad.kerasga.model_weights_as_matrix(model = model, weights_vector = solution))
 		strat = PokerGame.newPokerStrategy(model, num_cards, bet_to_ante_ratio)
-		#profits.append(strat.compute_expected_profit())
-		profits.append(PokerGame.compute_expected_profit(strat))
+		profits.append(strat.computeExpectedWinnings())
 	return numpy.average(profits)
 
 
@@ -168,8 +175,11 @@ def on_generation(ga_instance):
 	print("Score      = {score}".format(score = min(1, max(0, fitness * 200 / 99) ) ** 5 ) )
 	print()
 	plot_data_lock.acquire()
-	plot_x_data = numpy.linspace(1, len(ga_instance.best_solutions_fitness), num = len(ga_instance.best_solutions_fitness) + 1)
-	plot_y_data = ga_instance.best_solutions_fitness
+	plot_x_data = numpy.linspace(0, len(ga_instance.best_solutions_fitness), num = len(ga_instance.best_solutions_fitness) + 1)
+	plot_y_data = [0]
+	for fitness in ga_instance.best_solutions_fitness:
+		plot_y_data.append(fitness)
+	plot_y_data = numpy.array(plot_y_data)
 	plot_data_lock.release()
 	if global_time_limit != None and seconds_elapsed() > global_time_limit:
 		return "stop"
