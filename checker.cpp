@@ -47,6 +47,7 @@ double betCall(int self, int opponent)
 
 void findExpProfit()
 {
+	expProfit = 0;
 	for (int i = 0; i < n; ++i)
 	{
 		double oppCheckBetCallExp = 0;
@@ -106,9 +107,11 @@ void findExpProfit()
 		}
 
 		oppBetCall[i] = oppBetCallExp > oppBetFoldExp;
+		if(oppBetCall[i])
+			expProfit++;
 	}
 
-	expProfit = 0;
+	//expProfit = 0;
 
 	for (int i = 0; i < n; ++i)
 	{
@@ -120,15 +123,16 @@ void findExpProfit()
 			if (i == j) continue;
 
 			if(oppBetCall[j])
-				firstExpProfits[i] += openBetProbs[i] * betCall(i, j);
-			else
-				firstExpProfits[i] += openBetProbs[i] * ante;
-			if(oppCheckBet[j]) {
+				firstExpProfits[i] += 1;
+			// 	firstExpProfits[i] += openBetProbs[i] * betCall(i, j);
+			// else
+			// 	firstExpProfits[i] += openBetProbs[i] * ante;
+			/*if(oppCheckBet[j]) {
 				firstExpProfits[i] += (1 - openBetProbs[i]) * (1 - checkBetCallProbs[i]) * 0;
 				firstExpProfits[i] += (1 - openBetProbs[i]) * checkBetCallProbs[i] * betCall(i, j);
 			}
 			else
-				firstExpProfits[i] += (1 - openBetProbs[i]) * checkCheck(i, j);
+				firstExpProfits[i] += (1 - openBetProbs[i]) * checkCheck(i, j);*/
 
 			if(oppOpenBet[j]) {
 				secondExpProfits[i] += oppOpenBet[j] * (1 - betCallProbs[i]) * 0;
@@ -145,14 +149,14 @@ void findExpProfit()
 
 		}
 
-		firstExpProfits[i] /= (n - 1);
+		//firstExpProfits[i] /= (n - 1);
 		secondExpProfits[i] /= (n - 1);
 
-		expProfit += firstExpProfits[i];
-		expProfit += secondExpProfits[i];
+		//expProfit += firstExpProfits[i];
+		//expProfit += secondExpProfits[i];
 	}
 
-	expProfit /= 2 * n;
+	//expProfit ///= /*2 **/ n;
 }
 
 void info()
