@@ -1,6 +1,6 @@
 from asyncio import subprocess
 from itertools import count
-from re import S
+from re import A, S
 import string
 import numpy
 import numba
@@ -12,7 +12,7 @@ from numba import int32, float32    # import the types
 from numba.experimental import jitclass
 numpy.seterr(divide = "print")
 
-@njit
+#@njit
 def generatePredictionInputData(num_cards : int, bet_to_ante_ratio : int):
 	predictions = numpy.empty((num_cards * 4, 3))
 	curr = 0
@@ -48,15 +48,15 @@ spec = [
 	('author_open_checks', numba.types.DictType(*dict_spec)),
 ]
 
-@jitclass(spec)
+#@jitclass(spec)
 class PokerStrategy:
 	def __init__(self, num_cards : int, bet_to_ante_ratio : int, predictions : numba.float32[:]): # numpy.ndarray
 		self.num_cards = num_cards
 		self.bet_to_ante_ratio = bet_to_ante_ratio
-		self.chance_to_open_check = numpy.zeros(num_cards + 1, numba.float32)
-		self.chance_to_check_check = numpy.zeros(num_cards + 1, numba.float32)
-		self.chance_to_bet_fold = numpy.zeros(num_cards + 1, numba.float32)
-		self.chance_to_check_bet_fold = numpy.zeros(num_cards + 1, numba.float32)
+		self.chance_to_open_check = numpy.zeros(num_cards + 1)#, numba.float32)
+		self.chance_to_check_check = numpy.zeros(num_cards + 1)#, numba.float32)
+		self.chance_to_bet_fold = numpy.zeros(num_cards + 1)#, numba.float32)
+		self.chance_to_check_bet_fold = numpy.zeros(num_cards + 1)#, numba.float32)
 
 		self.author_checks_to_open_check = numba.typed.Dict.empty(*dict_spec)
 		self.author_folds_to_open_bet = numba.typed.Dict.empty(*dict_spec)
@@ -131,21 +131,22 @@ class PokerStrategy:
 		return self.author_open_checks[authors_card]
 
 
-@njit#(inline = "always")
+#@njit#(inline = "always")
 def antePotWinnings(self, self_card : int, opponents_card : int) -> float:
 	if self_card > opponents_card:
 		return 1.0
 	return 0.0
 
 
-@njit#(inline = "always")
+#@njit#(inline = "always")
 def betPotWinnings(self, self_card : int, opponents_card : int) -> float:
-	if self_card > opponents_card:
-		return 1 + self.bet_to_ante_ratio
-	return -self.bet_to_ante_ratio
+	if self_card < opponents_card:
+		return -self.bet_to_ante_ratio
+	return 1 + self.bet_to_ante_ratio
+	
 
 
-@njit#(parallel = True)
+#@njit#(parallel = True)
 def authorChecksToOpenCheck(self, authors_card : int) -> bool:
 	if authors_card in self.author_checks_to_open_check:
 		return self.author_checks_to_open_check[authors_card]
@@ -187,7 +188,7 @@ def authorChecksToOpenCheck(self, authors_card : int) -> bool:
 	return self.author_checks_to_open_check[authors_card]
 
 	
-@njit#(parallel = True)
+#@njit#(parallel = True)
 def authorFoldsToOpenBet(self, authors_card : int) -> bool:
 	if authors_card in self.author_folds_to_open_bet:
 		return self.author_folds_to_open_bet[authors_card]
@@ -217,13 +218,13 @@ def authorFoldsToOpenBet(self, authors_card : int) -> bool:
 			continue
 		expected_winnings_if_call \
 			+= betPotWinnings(self, authors_card, potential_my_card) \
-			* ((1 - self.chance_to_open_check[potential_my_card]))# / chance_to_have_open_bet)
+			* ((1.0 - self.chance_to_open_check[potential_my_card]))# / chance_to_have_open_bet)
 
-	self.author_folds_to_open_bet[authors_card] = expected_winnings_if_fold > expected_winnings_if_call
+	self.author_folds_to_open_bet[authors_card] = expected_winnings_if_fold >= expected_winnings_if_call
 	return self.author_folds_to_open_bet[authors_card]
 
 
-@njit#(parallel = True)
+#@njit#(parallel = True)
 def authorFoldsToCheckBet(self, authors_card : int) -> bool:
 	if authors_card in self.author_folds_to_check_bet:
 		return self.author_folds_to_check_bet[authors_card]
@@ -271,15 +272,21 @@ def printStrategy(strategy : PokerStrategy):
 	print(toString(strategy))
 
 
-@njit#(parallel = True)
+#@njit#(parallel = True)
 def computeExpectedWinnings(self) -> float:
 	num = 0
+	num1 = 0
 	for authors_card in range(1, self.num_cards + 1):
 		authorChecksToOpenCheck(self, authors_card)
 		authorFoldsToCheckBet(self, authors_card)
 		if not authorFoldsToOpenBet(self, authors_card):
-			num += 1
+			num1 += 1
 		self.authorOpenChecks(authors_card)
+	for authors_card in range(1, self.num_cards + 1):
+		if not self.author_folds_to_open_bet[authors_card]:
+			num += 1
+	if num1 != num:
+		num = 0
 	return num
 	total_winnings = 0.0
 	total_situations = 0

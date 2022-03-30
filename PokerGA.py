@@ -130,7 +130,10 @@ for i in range(0, 100000):
 	# if(new_thing > best):
 	# 	best = new_thing
 	print(new_thing)
-	print(PokerGame.computeExpectedWinnings(poker_strat))
+	other_thing = PokerGame.computeExpectedWinnings(poker_strat)
+	print(other_thing)
+	if new_thing != other_thing:
+		print(PokerGame.toString(poker_strat))
 	print()
 	# else:
 	match sit:

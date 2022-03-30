@@ -8,22 +8,22 @@
 const int MAX_N = 50;
 
 int n;
-double ante;
-double betSize;
+float ante;
+float betSize;
 
-double openBetProbs[MAX_N];
-double checkBetProbs[MAX_N];
-double betCallProbs[MAX_N];
-double checkBetCallProbs[MAX_N];
+float openBetProbs[MAX_N];
+float checkBetProbs[MAX_N];
+float betCallProbs[MAX_N];
+float checkBetCallProbs[MAX_N];
 
 bool oppOpenBet[MAX_N];
 bool oppCheckBet[MAX_N];
 bool oppBetCall[MAX_N];
 bool oppCheckBetCall[MAX_N];
 
-double firstExpProfits[MAX_N];
-double secondExpProfits[MAX_N];
-double expProfit;
+float firstExpProfits[MAX_N];
+float secondExpProfits[MAX_N];
+float expProfit;
 
 void error(const std::string& message)
 {
@@ -32,13 +32,13 @@ void error(const std::string& message)
 	exit(0);
 }
 
-double checkCheck(int self, int opponent)
+float checkCheck(int self, int opponent)
 {
 	if (self < opponent) return 0;
 	else return ante; 
 }
 
-double betCall(int self, int opponent)
+float betCall(int self, int opponent)
 {
 	if (self < opponent) return -betSize;
 	else return (ante + betSize); 
@@ -50,8 +50,8 @@ void findExpProfit()
 	expProfit = 0;
 	for (int i = 0; i < n; ++i)
 	{
-		double oppCheckBetCallExp = 0;
-		double oppCheckBetFoldExp = 0;
+		float oppCheckBetCallExp = 0;
+		float oppCheckBetFoldExp = 0;
 
 		for (int j = 0; j < n; ++j)
 		{
@@ -62,8 +62,8 @@ void findExpProfit()
 
 		oppCheckBetCall[i] = oppCheckBetCallExp > oppCheckBetFoldExp;
 
-		double oppOpenBetExp = 0;
-		double oppOpenCheckExp = 0;
+		float oppOpenBetExp = 0;
+		float oppOpenCheckExp = 0;
 
 		for (int j = 0; j < n; ++j)
 		{
@@ -81,8 +81,8 @@ void findExpProfit()
 
 		oppOpenBet[i] = oppOpenBetExp > oppOpenCheckExp;
 
-		double oppCheckBetExp = 0;
-		double oppCheckCheckExp = 0;
+		float oppCheckBetExp = 0;
+		float oppCheckCheckExp = 0;
 
 		for (int j = 0; j < n; ++j)
 		{
@@ -96,8 +96,8 @@ void findExpProfit()
 
 		oppCheckBet[i] = oppCheckBetExp > oppCheckCheckExp;
 
-		double oppBetCallExp = 0;
-		double oppBetFoldExp = 0;
+		float oppBetCallExp = 0;
+		float oppBetFoldExp = 0;
 
 		for (int j = 0; j < n; ++j)
 		{
@@ -161,10 +161,10 @@ void findExpProfit()
 
 void info()
 {
-	double avgOpenBetProb = 0;
-	double avgBetCallProb = 0;
-	double avgCheckBetProb = 0;
-	double avgCheckBetCallProb = 0;
+	float avgOpenBetProb = 0;
+	float avgBetCallProb = 0;
+	float avgCheckBetProb = 0;
+	float avgCheckBetCallProb = 0;
 
 	for (int i = 0; i < n; ++i)
 	{
@@ -217,7 +217,7 @@ void parseStrategy(std::ifstream& stratFile)
 	int card;
 	std::string situation;
 	std::string action;
-	double prob;
+	float prob;
 
 	std::fill(openBetProbs, openBetProbs + n, -1);
 	std::fill(checkBetProbs, checkBetProbs + n, -1);
@@ -263,7 +263,7 @@ void parseStrategy(std::ifstream& stratFile)
 
 		if (situation != "open" && situation != "check" && situation != "bet" && situation != "check-bet") error("Invalid situation.");
 
-		double* toSet = nullptr;
+		float* toSet = nullptr;
 
 		if (situation == "open" && (action == "check" || action == "bet")) toSet = &openBetProbs[card];
 		else if (situation == "check" && (action == "check" || action == "bet")) toSet = &checkBetProbs[card];
@@ -311,7 +311,7 @@ int main(int argc, char *argv[])
 
 	findExpProfit();
 
-	double score = std::min(std::max(2 * expProfit / (0.99 * ante), 0.0), 1.0);
+	float score = std::min(std::max(2 * expProfit / (0.99 * ante), 0.0), 1.0);
 	score = score * score * score * score * score;
 
 	//std::cout << std::fixed << std::setprecision(4) << score << std::endl;
